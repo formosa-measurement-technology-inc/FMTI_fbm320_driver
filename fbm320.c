@@ -34,8 +34,8 @@
 
 #include "fbm320.h"
 
-extern volatile uint32_t TMR0_Ticks;
-extern volatile uint32_t fbm320_update_rdy;
+volatile uint32_t TMR0_Ticks;
+volatile uint32_t fbm320_update_rdy;
 
 static void fbm320_us_delay(uint32_t us);
 #ifdef SPI
@@ -55,6 +55,7 @@ static int32_t fbm320_set_oversampling_rate(struct fbm320_data *barom
 static int32_t fbm320_chipid_check(struct fbm320_data *barom);
 static int32_t fbm320_version_identification(struct fbm320_data *barom);
 static int32_t fbm320_calculation(struct fbm320_data *barom);
+static int32_t pressure_altitude_conversion(int32_t real_pressure);
 
 /**
  * { pointer of fbm320 data }
@@ -91,8 +92,7 @@ static uint8_t fbm320_spi_writeblock(uint8_t reg_addr, uint32_t cnt, const uint8
 	SPI_WRITE_TX0(SPI0, (reg_addr + (cnt - 1)));
 	SPI_TRIGGER(SPI0);
 	while (SPI_IS_BUSY(SPI0));
-	for (i = 0; i < cnt; i++)
-	{
+	for (i = 0; i < cnt; i++) {
 		SPI_WRITE_TX0(SPI0, *(reg_data + i));
 		SPI_TRIGGER(SPI0);
 		/* Check SPI0 busy status */
@@ -132,8 +132,7 @@ static uint8_t fbm320_spi_readblock(uint8_t reg_addr, uint32_t cnt, uint8_t *reg
 	SPI_WRITE_TX0(SPI0, reg_addr + (cnt - 1));
 	SPI_TRIGGER(SPI0);
 	while (SPI_IS_BUSY(SPI0));
-	for (i = (cnt - 1); i >= 0; i--)
-	{
+	for (i = (cnt - 1); i >= 0; i--) {
 		SPI_WRITE_TX0(SPI0, 0x00);//dummy clock
 		SPI_TRIGGER(SPI0);
 		while (SPI_IS_BUSY(SPI0));
@@ -172,7 +171,6 @@ static uint8_t fbm320_i2c_readblock(uint8_t reg_addr, uint32_t cnt, uint8_t *reg
 	return status;
 }
 #endif
-
 /**
  * @brief      { API for fbm320 delay }
  *
@@ -194,6 +192,7 @@ static void fbm320_us_delay(uint32_t us)
 int8_t fbm320_init(void)
 {
 	int32_t err;
+	uint8_t data_buf;
 
 #ifdef SPI
 	fbm320_barom.bus_write = fbm320_spi_writeblock;
@@ -210,37 +209,64 @@ int8_t fbm320_init(void)
 	err = fbm320_chipid_check(barom);
 	if (err) {
 		err = -1;
-//		goto err_chip_id_chk;
+		goto err_chip_id_chk;
+	} else {
+#ifdef DEBUG_FBM320
+		printf("%s:fbm320_chipid_check() passed!\n", __func__);
+#endif
 	}
 
 	err = fbm320_version_identification(barom);
 	if (err) {
 		err = -2;
-//		goto err_version_identification;
+		goto err_version_identification;
+	} else {
+#ifdef DEBUG_FBM320
+		printf("%s:fbm320_version_identification() passed!\n", __func__);
+#endif
 	}
 
 	err = fbm320_read_store_otp_data(barom);
 	if (err) {
 		err = -3;
-//		goto err_read_otp;
+		goto err_read_otp;
+	} else {
+#ifdef DEBUG_FBM320
+		printf("%s:fbm320_read_store_otp_data() passed!\n", __func__);
+#endif//DEBUG_FBM330
 	}
 	err = 0;
 
 	fbm320_set_oversampling_rate(barom, OVERSAMPLING_RATE_DEFAULT);
-
-//err_chip_id_chk:
-//err_version_identification:
-//err_read_otp:
+	/* Setting the P_CONFIG_REG_GAIN */
+#define P_CONFIG_REG_GAIN_SETTING FBM320_P_CONFIG_REG_GAIN_X16
+	barom->bus_read(FBM320_P_CONFIG_REG, sizeof(uint8_t), &data_buf);
+	data_buf &= ~(FBM320_P_CONFIG_REG_GAIN_MAK);
+	data_buf |= P_CONFIG_REG_GAIN_SETTING;
+	barom->bus_write(FBM320_P_CONFIG_REG, sizeof(uint8_t), &data_buf);
+#ifdef DEBUG_FBM320
+	printf("%s:Setting of FBM320_P_CONFIG_REG_GAIN: %#x\n", __func__, P_CONFIG_REG_GAIN_SETTING);
+#endif
 
 #ifdef DEBUG_FBM320
-	printf("fbm320_init; fbm320_ID:%#x,err:%d\n", fbm320_barom.chip_id, err);
-#endif//DEBUG_FBM320
-	if (err != 0) {
-		return -1;
-	}
+	printf("%s:fbm320_init() succeeded!\n", __func__);
+#endif
+	return err;
+
+err_chip_id_chk:
 #ifdef DEBUG_FBM320
-	printf("fbm320_init succeeded!\n");
-#endif//DEBUG_FBM320	
+	printf("%s:fbm320_init() failed!; fbm320_ID:%#x,err:%d\n", __func__, fbm320_barom.chip_id, err);
+#endif
+	return err;
+err_version_identification:
+#ifdef DEBUG_FBM320
+	printf("%s:fbm320_init() failed!; fbm320 version:%#x,err:%d\n", __func__, fbm320_barom.hw_ver, err);
+#endif
+	return err;
+err_read_otp:
+#ifdef DEBUG_FBM320
+	printf("%s:fbm320_init() failed!; fbm320 otp reading failed!,err:%d\n", __func__, err);
+#endif
 	return err;
 }
 
@@ -326,8 +352,8 @@ static int fbm320_get_raw_temperature(struct fbm320_data *barom)
 	barom->raw_temperature = (buf[0] * 256 * 256) + (buf[1] * 256) + buf[2];
 
 #ifdef DEBUG_FBM320
-	printf("%s: uncompensated temperature: %d\n", FBM320_NAME, barom->raw_temperature);
-#endif//DEBUG_FBM320
+	printf("%s: uncompensated temperature: %d\n", DEVICE_NAME, barom->raw_temperature);
+#endif
 	return err;
 }
 /**
@@ -367,8 +393,8 @@ static int32_t fbm320_get_raw_pressure(struct fbm320_data *barom)
 	barom->raw_pressure = (buf[0] * 256 * 256) + (buf[1] * 256) + buf[2];
 
 #ifdef DEBUG_FBM320
-	printf("%s: uncompensated pressure:  %d\n", FBM320_NAME, barom->raw_pressure);
-#endif//DEBUG_FBM320
+	printf("%s: uncompensated pressure:  %d\n", DEVICE_NAME, barom->raw_pressure);
+#endif
 
 	return err;
 }
@@ -381,11 +407,10 @@ static int32_t fbm320_get_raw_pressure(struct fbm320_data *barom)
  */
 static int32_t fbm320_read_store_otp_data(struct fbm320_data *barom)
 {
-	uint8_t tmp[FBM320_CALIBRATION_DATA_LENGTH] = {0};
-	uint16_t R[10] = {0};
-	int32_t status;
-	//uint8_t i;
 	struct fbm320_calibration_data *cali = &(barom->calibration);
+	int32_t status;
+	uint16_t R[10] = {0};
+	uint8_t tmp[FBM320_CALIBRATION_DATA_LENGTH] = {0};
 
 	status = barom->bus_read(FBM320_CALIBRATION_DATA_START0,
 	                         (FBM320_CALIBRATION_DATA_LENGTH - 2) * sizeof(uint8_t),
@@ -399,8 +424,8 @@ static int32_t fbm320_read_store_otp_data(struct fbm320_data *barom)
 	status = barom->bus_read(FBM320_CALIBRATION_DATA_START2, sizeof(uint8_t), (uint8_t *)tmp + 19);
 	if (status < 0)
 		goto exit;
-
-	R[0] = (tmp[0] << 8 | tmp[1]); //read OTP data here
+	/* Read OTP data here */
+	R[0] = (tmp[0] << 8 | tmp[1]);
 	R[1] = (tmp[2] << 8 | tmp[3]);
 	R[2] = (tmp[4] << 8 | tmp[5]);
 	R[3] = (tmp[6] << 8 | tmp[7]);
@@ -438,30 +463,30 @@ static int32_t fbm320_read_store_otp_data(struct fbm320_data *barom)
 	};
 
 #ifdef DEBUG_FBM320
-	printf("%s: R0= %#x\n", FBM320_NAME, R[0]);
-	printf("%s: R1= %#x\n", FBM320_NAME, R[1]);
-	printf("%s: R2= %#x\n", FBM320_NAME, R[2]);
-	printf("%s: R3= %#x\n", FBM320_NAME, R[3]);
-	printf("%s: R4= %#x\n", FBM320_NAME, R[4]);
-	printf("%s: R5= %#x\n", FBM320_NAME, R[5]);
-	printf("%s: R6= %#x\n", FBM320_NAME, R[6]);
-	printf("%s: R7= %#x\n", FBM320_NAME, R[7]);
-	printf("%s: R8= %#x\n", FBM320_NAME, R[8]);
-	printf("%s: R9= %#x\n", FBM320_NAME, R[9]);
-	printf("%s: C0= %d\n", FBM320_NAME, cali->C0);
-	printf("%s: C1= %d\n", FBM320_NAME, cali->C1);
-	printf("%s: C2= %d\n", FBM320_NAME, cali->C2);
-	printf("%s: C3= %d\n", FBM320_NAME, cali->C3);
-	printf("%s: C4= %d\n", FBM320_NAME, cali->C4);
-	printf("%s: C5= %d\n", FBM320_NAME, cali->C5);
-	printf("%s: C6= %d\n", FBM320_NAME, cali->C6);
-	printf("%s: C7= %d\n", FBM320_NAME, cali->C7);
-	printf("%s: C8= %d\n", FBM320_NAME, cali->C8);
-	printf("%s: C9= %d\n", FBM320_NAME, cali->C9);
-	printf("%s: C10= %d\n", FBM320_NAME, cali->C10);
-	printf("%s: C11= %d\n", FBM320_NAME, cali->C11);
-	printf("%s: C12= %d\n", FBM320_NAME, cali->C12);
-#endif//DEBUG_FBM320
+	printf("%s: R0= %#x\n", DEVICE_NAME, R[0]);
+	printf("%s: R1= %#x\n", DEVICE_NAME, R[1]);
+	printf("%s: R2= %#x\n", DEVICE_NAME, R[2]);
+	printf("%s: R3= %#x\n", DEVICE_NAME, R[3]);
+	printf("%s: R4= %#x\n", DEVICE_NAME, R[4]);
+	printf("%s: R5= %#x\n", DEVICE_NAME, R[5]);
+	printf("%s: R6= %#x\n", DEVICE_NAME, R[6]);
+	printf("%s: R7= %#x\n", DEVICE_NAME, R[7]);
+	printf("%s: R8= %#x\n", DEVICE_NAME, R[8]);
+	printf("%s: R9= %#x\n", DEVICE_NAME, R[9]);
+	printf("%s: C0= %d\n", DEVICE_NAME, cali->C0);
+	printf("%s: C1= %d\n", DEVICE_NAME, cali->C1);
+	printf("%s: C2= %d\n", DEVICE_NAME, cali->C2);
+	printf("%s: C3= %d\n", DEVICE_NAME, cali->C3);
+	printf("%s: C4= %d\n", DEVICE_NAME, cali->C4);
+	printf("%s: C5= %d\n", DEVICE_NAME, cali->C5);
+	printf("%s: C6= %d\n", DEVICE_NAME, cali->C6);
+	printf("%s: C7= %d\n", DEVICE_NAME, cali->C7);
+	printf("%s: C8= %d\n", DEVICE_NAME, cali->C8);
+	printf("%s: C9= %d\n", DEVICE_NAME, cali->C9);
+	printf("%s: C10= %d\n", DEVICE_NAME, cali->C10);
+	printf("%s: C11= %d\n", DEVICE_NAME, cali->C11);
+	printf("%s: C12= %d\n", DEVICE_NAME, cali->C12);
+#endif
 exit:
 	return status;
 }
@@ -489,39 +514,39 @@ static int fbm320_version_identification(struct fbm320_data *barom)
 
 	version = ((buf[0] & 0xC0) >> 6) | ((buf[1] & 0x70) >> 2);
 #ifdef DEBUG_FBM320
-	printf("%s: The value of version= %#x\n", FBM320_NAME, version);
-#endif//DEBUG_FBM320
+	printf("%s: The value of version: %#x\n", __func__, version);
+#endif
 
 	switch (version)	{
 	case hw_ver_b1:
 		barom->hw_ver = hw_ver_b1;
 #ifdef DEBUG_FBM320
-		printf("%s: The version of sensor is B1.\n", FBM320_NAME);
-#endif//DEBUG_FBM320		
+		printf("%s: The version of sensor is B1.\n", __func__);
+#endif
 		break;
 	case hw_ver_b2:
 		barom->hw_ver = hw_ver_b2;
 #ifdef DEBUG_FBM320
-		printf("%s: The version of sensor is B2.\n", FBM320_NAME);
-#endif//DEBUG_FBM320
+		printf("%s: The version of sensor is B2.\n", __func__);
+#endif
 		break;
 	case hw_ver_b3:
 		barom->hw_ver = hw_ver_b3;
 #ifdef DEBUG_FBM320
-		printf("%s: The version of sensor is B3.\n", FBM320_NAME);
-#endif//DEBUG_FBM320
+		printf("%s: The version of sensor is B3.\n", __func__);
+#endif
 		break;
 	case hw_ver_b4:
 		barom->hw_ver = hw_ver_b4;
 #ifdef DEBUG_FBM320
-		printf("%s: The version of sensor is B4.\n", FBM320_NAME);
-#endif//DEBUG_FBM320
+		printf("%s: The version of sensor is B4.\n", __func__);
+#endif
 		break;
 	default:
 		barom->hw_ver = hw_ver_unknown;
 #ifdef DEBUG_FBM320
-		printf("%s: The version of sensor is unknown.\n", FBM320_NAME);
-#endif//DEBUG_FBM320
+		printf("%s: The version of sensor is unknown.\n", __func__);
+#endif
 		break;
 	}
 	return err;
@@ -534,8 +559,8 @@ static int32_t fbm320_set_oversampling_rate(struct fbm320_data *barom
 
 	barom->oversampling_rate = osr_setting;
 #ifdef DEBUG_FBM320
-	printf("Setting of oversampling_rate:%#x\r\n", barom->oversampling_rate);
-#endif//DEBUG_FBM320			
+	printf("%s:Setting of oversampling_rate:%#x\r\n", __func__, barom->oversampling_rate);
+#endif
 
 	/* Setting conversion time for pressure measurement */
 	switch (osr_setting) {
@@ -566,7 +591,7 @@ static int32_t fbm320_set_oversampling_rate(struct fbm320_data *barom
 		barom->bus_read(0xA6, sizeof(uint8_t), &data_buf);
 #ifdef DEBUG_FBM320
 		printf("reg_0xA6:%#x\n\r", data_buf);
-#endif//DEBUG_FBM320
+#endif
 		break;
 	}
 	/* Setting covversion time for temperature measurement */
@@ -581,13 +606,12 @@ static int32_t fbm320_chipid_check(struct fbm320_data *barom)
 
 	err = barom->bus_read(FBM320_CHIP_ID_REG, sizeof(uint8_t), &chip_id_read);
 #ifdef DEBUG_FBM320
-	printf("%s: chip_id reading is %#x \n", FBM320_NAME, chip_id_read);
-#endif//DEBUG_FBM320
+	printf("%s: chip_id reading is %#x \n", __func__, chip_id_read);
+#endif
 
 	if (chip_id_read != FBM320_CHIP_ID) {
 		err = -1;
 		return err;
-//		goto err_chip_id_chk;
 	} else {
 		barom->chip_id = chip_id_read;
 		return err = 0;
@@ -608,30 +632,25 @@ void fbm320_update_data(void)
 	tick_current = TMR0_Ticks;
 	tick_diff = tick_current - tick_last;
 
-	if (t_start_flag == 0 && !fbm320_update_rdy)
-	{
+	if (t_start_flag == 0 && !fbm320_update_rdy) {
 #ifdef DEBUG_FBM320
 		printf("start t_measurement\r\n");
-#endif//DEBUG_FBM320			
+#endif
 		fbm320_startMeasure_temp(barom);
 		t_start_flag = 1;
 		tick_last = TMR0_Ticks;
-	}
-	else if ((tick_diff * 1000 > barom->cnvTime_temp ) && (p_start_flag == 0))
-	{
+	} else if ((tick_diff * 1000 > barom->cnvTime_temp ) && (p_start_flag == 0)) {
 #ifdef DEBUG_FBM320
 		printf("start p_measurement\r\n");
-#endif//DEBUG_FBM320			
+#endif
 		fbm320_get_raw_temperature(barom);
 		fbm320_startMeasure_press(barom);
 		p_start_flag = 1;
 		tick_last = TMR0_Ticks;
-	}
-	else if (tick_diff * 1000 > barom->cnvTime_press )
-	{
+	} else if (tick_diff * 1000 > barom->cnvTime_press ) {
 #ifdef DEBUG_FBM320
 		printf("read pressure\r\n");
-#endif//DEBUG_FBM320			
+#endif
 		fbm320_get_raw_pressure(barom);
 		t_start_flag = 0;
 		p_start_flag = 0;
@@ -644,7 +663,7 @@ void fbm320_update_data(void)
 	printf("tick_current:%d\r\n", tick_current);
 	printf("tick_last:%d\r\n", tick_last);
 	printf("FBM320 is updating %d\r\n", TMR0_Ticks);
-#endif//DEBUG_FBM320		
+#endif
 	return ;
 }
 /**
@@ -684,7 +703,6 @@ int fbm320_calculation(struct fbm320_data *barom)
 	DT2 = (X01 + X02 + X03) >> 12;
 	RT =  ((2500 << 15) - X01 - X02 - X03) >> 15;
 	/* calculation for real pressure value*/
-//	DT2 = DT2;
 	UP = barom->raw_pressure;
 	switch (barom->hw_ver) {
 	case hw_ver_b1:
@@ -712,7 +730,7 @@ int fbm320_calculation(struct fbm320_data *barom)
 	};
 
 	X22 = (((cali->C9 * DT2) >> 17) * DT2) >> 12;
-	X23 = abs (X22 - X21);
+	X23 = (X22 >= X21) ? (X22 - X21) : (X21 - X22);
 	switch (barom->hw_ver) {
 	case hw_ver_b1:
 		X24 = (X23 >> 11) * (cali->C7 + 285594);
@@ -747,24 +765,36 @@ int fbm320_calculation(struct fbm320_data *barom)
 	barom->real_pressure = RP; //uint: Pa
 
 #ifdef DEBUG_FBM320
-	printf("%s: calibrated pressure: %d\n", FBM320_NAME, RP);
-#endif//DEBUG_FBM320
+	printf("%s: calibrated pressure: %d\n", DEVICE_NAME, RP);
+#endif
 
 	return 0;
 }
 /**
  * @brief      { API for converting pressure value to altitude }
  *
- * @param[in]  real_pressure  The real pressure in unit of 0.125 Pa
+ * @param[in]  real_pressure  The real pressure is in unit of Pa
  *
- * @return     { Absolute altitude value in unit millimeter(mm) }
+ * @return     { Absolute altitude value is in unit millimeter(mm) }
  */
-int32_t abs_altitude(int32_t real_pressure)
+int32_t fbm320_get_altitude(int32_t pressure_input)
 {
-	int8_t P0;
-	int16_t hs1, dP0;
+	return pressure_altitude_conversion(pressure_input * 8);
+}
+/**
+ * @brief      { This function is used for converting pressure value to altitude.
+ *               The standard sea-level pressure is 1013.25 hPa. }
+ *
+ * @param[in]  real_pressure  The real pressure is in unit of 0.125 Pa
+ *
+ * @return     { The altitude value is in unit of millimeter(mm) }
+ */
+static int32_t pressure_altitude_conversion(int32_t real_pressure)
+{
 	int32_t RP, h0, hs0, HP1, HP2, RH;
-
+	int16_t hs1, dP0;
+	int8_t P0;
+	
 	RP = real_pressure;
 
 	if ( RP >= 824000 ) {
@@ -772,104 +802,87 @@ int32_t abs_altitude(int32_t real_pressure)
 		h0	=	-138507	;
 		hs0	=	-5252	;
 		hs1	=	311	;
-	}
-	else if ( RP >= 784000 ) {
+	} else if ( RP >= 784000 ) {
 		P0	=	98	;
 		h0	=	280531	;
 		hs0	=	-5468	;
 		hs1	=	338	;
-	}
-	else if ( RP >= 744000 ) {
+	} else if ( RP >= 744000 ) {
 		P0	=	93	;
 		h0	=	717253	;
 		hs0	=	-5704	;
 		hs1	=	370	;
-	}
-	else if ( RP >= 704000 ) {
+	} else if ( RP >= 704000 ) {
 		P0	=	88	;
 		h0	=	1173421	;
 		hs0	=	-5964	;
 		hs1	=	407	;
-	}
-	else if ( RP >= 664000 ) {
+	} else if ( RP >= 664000 ) {
 		P0	=	83	;
 		h0	=	1651084	;
 		hs0	=	-6252	;
 		hs1	=	450	;
-	}
-	else if ( RP >= 624000 ) {
+	} else if ( RP >= 624000 ) {
 		P0	=	78	;
 		h0	=	2152645	;
 		hs0	=	-6573	;
 		hs1	=	501	;
-	}
-	else if ( RP >= 584000 ) {
+	} else if ( RP >= 584000 ) {
 		P0	=	73	;
 		h0	=	2680954	;
 		hs0	=	-6934	;
 		hs1	=	560	;
-	}
-	else if ( RP >= 544000 ) {
+	} else if ( RP >= 544000 ) {
 		P0	=	68	;
 		h0	=	3239426	;
 		hs0	=	-7342	;
 		hs1	=	632	;
-	}
-	else if ( RP >= 504000 ) {
+	} else if ( RP >= 504000 ) {
 		P0	=	63	;
 		h0	=	3832204	;
 		hs0	=	-7808	;
 		hs1	=	719	;
-	}
-	else if ( RP >= 464000 ) {
+	} else if ( RP >= 464000 ) {
 		P0	=	58	;
 		h0	=	4464387	;
 		hs0	=	-8345	;
 		hs1	=	826	;
-	}
-	else if ( RP >= 424000 ) {
+	} else if ( RP >= 424000 ) {
 		P0	=	53	;
 		h0	=	5142359	;
 		hs0	=	-8972	;
 		hs1	=	960	;
-	}
-	else if ( RP >= 384000 ) {
+	} else if ( RP >= 384000 ) {
 		P0	=	48	;
 		h0	=	5874268	;
 		hs0	=	-9714	;
 		hs1	=	1131	;
-	}
-	else if ( RP >= 344000 ) {
+	} else if ( RP >= 344000 ) {
 		P0	=	43	;
 		h0	=	6670762	;
 		hs0	=	-10609	;
 		hs1	=	1354	;
-	}
-	else if ( RP >= 304000 ) {
+	} else if ( RP >= 304000 ) {
 		P0	=	38	;
 		h0	=	7546157	;
 		hs0	=	-11711	;
 		hs1	=	1654	;
-	}
-	else if ( RP >= 264000 ) {
+	} else if ( RP >= 264000 ) {
 		P0	=	33	;
 		h0	=	8520395	;
 		hs0	=	-13103	;
 		hs1	=	2072	;
-	}
-	else {
+	} else {
 		P0	=	28	;
 		h0	=	9622536	;
 		hs0	=	-14926	;
 		hs1	=	2682	;
 	}
-	dP0	=	RP - P0 * 8000	;
 
-	HP1	=	( hs0 * dP0 ) >> 1	;
-	HP2	=	((( hs1 * dP0 ) >> 14 ) * dP0 ) >> 4	;
-
-	RH	=	(( HP1 + HP2 ) >> 8 ) + h0	;
+	dP0	=	RP - P0 * 8000;
+	HP1	=	( hs0 * dP0 ) >> 1;
+	HP2	=	((( hs1 * dP0 ) >> 14 ) * dP0 ) >> 4;
+	RH	=	(( HP1 + HP2 ) >> 8 ) + h0;
 
 	return RH;
 }
-
