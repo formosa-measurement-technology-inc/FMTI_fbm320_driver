@@ -4,6 +4,7 @@
 
 /* Private variable */
 int32_t real_p, real_t, altitude;
+//float real_p, real_t;
 extern volatile uint32_t TMR0_Ticks; //one tick per millisecond(ms)
 extern volatile uint32_t fbm320_update_rdy;
 
