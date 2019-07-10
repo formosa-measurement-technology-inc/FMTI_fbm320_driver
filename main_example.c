@@ -43,7 +43,7 @@ int32_t main(void)
 			/* This function read pressure and temperature values. Pressure uint:Pa, Temperature unit:0.01 degree Celsius */
 			fbm320_read_data(&real_p, &real_t);
 			/* This function converts pressure value to altitude in unit of millimeter(mm). */
-			altitude = fbm320_get_altitude(real_p_s32);
+			altitude = fbm320_get_altitude(real_p);
 			fbm320_update_rdy = 0;
 		}
 	}
