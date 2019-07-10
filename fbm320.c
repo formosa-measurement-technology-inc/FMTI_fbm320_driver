@@ -670,7 +670,7 @@ void fbm320_update_data(void)
  * @brief      { API for calculating real temperature and pressure values.
  *               The results are stored in fbm320_data structure.
  *               "barom->real_temperature" is represented real temperature value.
- *               "barom->real_temperature" is in uint of drgree Celsius.
+ *               "barom->real_temperature" is in uint of 0.01 drgree Celsius.
  *               "barom->real_pressure" is represented real pressure value.
  *               "barom->real_pressure" is in unit of Pa. }
  *
@@ -773,9 +773,9 @@ int fbm320_calculation(struct fbm320_data *barom)
 /**
  * @brief      { API for converting pressure value to altitude }
  *
- * @param[in]  real_pressure  The real pressure is in unit of Pa
+ * @param[in]  pressure_input  The pressure_input is in unit of Pa
  *
- * @return     { Absolute altitude value is in unit millimeter(mm) }
+ * @return     { The altitude value is in unit millimeter(mm) }
  */
 int32_t fbm320_get_altitude(int32_t pressure_input)
 {
