@@ -197,6 +197,9 @@ int8_t fbm320_init(void)
 #ifdef SPI
 	fbm320_barom.bus_write = fbm320_spi_writeblock;
 	fbm320_barom.bus_read = fbm320_spi_readblock;
+	/* Set SPI bus as 4 wires mode */
+	data_buf = FBM320_SPI_CTRL_REG_SDO_ACTIVE_EN;
+	barom->bus_write(FBM320_SPI_CTRL_REG, sizeof(uint8_t), &data_buf);
 #else
 	fbm320_barom.bus_write = fbm320_i2c_writeblock;
 	fbm320_barom.bus_read = fbm320_i2c_readblock;
@@ -349,7 +352,7 @@ static int fbm320_get_raw_temperature(struct fbm320_data *barom)
 	uint8_t buf[3] = {0};
 
 	err = barom->bus_read(FBM320_READ_MEAS_REG_U, 3 * sizeof(uint8_t), buf);
-	barom->raw_temperature = (buf[0] * 256 * 256) + (buf[1] * 256) + buf[2];
+	barom->raw_temperature = ((uint32_t)buf[0] << 16) + ((uint32_t)buf[1] << 8) + buf[2];
 
 #ifdef DEBUG_FBM320
 	printf("%s: uncompensated temperature: %d\n", DEVICE_NAME, barom->raw_temperature);
@@ -377,7 +380,7 @@ static int32_t fbm320_startMeasure_press(struct fbm320_data *barom)
 /**
  * @brief      { This api gets the data from the registers of FBM320_READ_MEAS_REG_U
  *               , FBM320_READ_MEAS_REG_L and FBM320_READ_MEAS_REG_XL. And the data are
- *               stored in "barom->raw_temperature". }
+ *               stored in "barom->raw_pressure". }
  *
  * @param      barom  pointer of fbm320 data structure
  *
@@ -389,8 +392,7 @@ static int32_t fbm320_get_raw_pressure(struct fbm320_data *barom)
 	uint8_t buf[3] = {0};
 
 	err = barom->bus_read(FBM320_READ_MEAS_REG_U, 3 * sizeof(uint8_t), buf);
-
-	barom->raw_pressure = (buf[0] * 256 * 256) + (buf[1] * 256) + buf[2];
+	barom->raw_pressure = ((uint32_t)buf[0] << 16) + ((uint32_t)buf[1] << 8) + buf[2];
 
 #ifdef DEBUG_FBM320
 	printf("%s: uncompensated pressure:  %d\n", DEVICE_NAME, barom->raw_pressure);
@@ -456,6 +458,7 @@ static int32_t fbm320_read_store_otp_data(struct fbm320_data *barom)
 	case hw_ver_b2:
 	case hw_ver_b3:
 	case hw_ver_b4:
+	default:
 		cali->C4 = ((uint32_t)R[3] << 2) | (R[0] & 3);
 		cali->C7 = ((uint32_t)R[6] << 3) | (R[5] & 7);
 		cali->C12 = ((R[0] & 0x0C) << 1) | (R[7] & 7);
@@ -690,18 +693,19 @@ int fbm320_calculation(struct fbm320_data *barom)
 	DT = ((UT - 8388608) >> 4) + (cali->C0 << 4);
 	switch (barom->hw_ver) {
 	case hw_ver_b1:
-		X01 = (cali->C1 + 4418) * DT >> 1;
+		X01 = (cali->C1 + 4418L) * DT >> 1;
 		break;
 	case hw_ver_b2:
 	case hw_ver_b3:
 	case hw_ver_b4:
-		X01 = (cali->C1 + 4459) * DT >> 1;
+	default:
+		X01 = (cali->C1 + 4459L) * DT >> 1;
 		break;
 	};
-	X02 = ((((cali->C2 - 256) * DT) >> 14) * DT) >> 4;
+	X02 = ((((cali->C2 - 256L) * DT) >> 14) * DT) >> 4;
 	X03 = (((((cali->C3 * DT) >> 18) * DT) >> 18) * DT);
 	DT2 = (X01 + X02 + X03) >> 12;
-	RT =  ((2500 << 15) - X01 - X02 - X03) >> 15;
+	RT =  ((2500L << 15) - X01 - X02 - X03) >> 15;
 	/* calculation for real pressure value*/
 	UP = barom->raw_pressure;
 	switch (barom->hw_ver) {
@@ -711,7 +715,8 @@ int fbm320_calculation(struct fbm320_data *barom)
 	case hw_ver_b2:
 	case hw_ver_b3:
 	case hw_ver_b4:
-		X11 = ((cali->C5 - 4443) * DT2);
+	default:
+		X11 = ((cali->C5 - 4443L) * DT2);
 		break;
 	};
 
@@ -719,13 +724,14 @@ int fbm320_calculation(struct fbm320_data *barom)
 	switch (barom->hw_ver) {
 	case hw_ver_b1:
 		X13 = ((X11 + X12) >> 10) + ((cali->C4 + 211288) << 4);
-		X21 = ((cali->C8 + 7209) * DT2) >> 10;
+		X21 = ((cali->C8 + 7209L) * DT2) >> 10;
 		break;
 	case hw_ver_b2:
 	case hw_ver_b3:
 	case hw_ver_b4:
+	default:
 		X13 = ((X11 + X12) >> 10) + ((cali->C4 + 120586) << 4);
-		X21 = ((cali->C8 + 7180) * DT2) >> 10;
+		X21 = ((cali->C8 + 7180L) * DT2) >> 10;
 		break;
 	};
 
@@ -743,6 +749,7 @@ int fbm320_calculation(struct fbm320_data *barom)
 	case hw_ver_b2:
 	case hw_ver_b3:
 	case hw_ver_b4:
+	default:
 		X24 = (X23 >> 11) * (cali->C7 + 166426);
 		X25 = ((X23 & 0x7FF) * (cali->C7 + 166426)) >> 11;
 		if ((X22 - X21) < 0)
