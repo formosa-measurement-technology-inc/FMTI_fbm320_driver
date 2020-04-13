@@ -197,9 +197,14 @@ int8_t fbm320_init(void)
 #ifdef SPI
 	fbm320_barom.bus_write = fbm320_spi_writeblock;
 	fbm320_barom.bus_read = fbm320_spi_readblock;
-	/* Set SPI bus as 4 wires mode */
-	data_buf = FBM320_SPI_CTRL_REG_SDO_ACTIVE_EN;
-	barom->bus_write(FBM320_SPI_CTRL_REG, sizeof(uint8_t), &data_buf);
+	/* The default of SPI is in 3 wires mode after power on reset. If 4 wires SPI
+    mode is preffered, the following statements will be needed. */
+    #define SPI_4_WIRES_MODE
+	#ifdef SPI_4_WIRES_MODE
+		/* Set SPI bus as 4 wires mode */
+		data_buf = FBM320_SPI_CTRL_REG_SDO_ACTIVE_EN;
+		barom->bus_write(FBM320_SPI_CTRL_REG, sizeof(uint8_t), &data_buf);
+	#endif
 #else
 	fbm320_barom.bus_write = fbm320_i2c_writeblock;
 	fbm320_barom.bus_read = fbm320_i2c_readblock;
