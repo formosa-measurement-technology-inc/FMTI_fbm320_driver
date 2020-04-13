@@ -194,6 +194,10 @@ int8_t fbm320_init(void)
 	int32_t err;
 	uint8_t data_buf;
 
+	fbm320_barom.delay_usec = fbm320_us_delay;
+	/* The minimum start up time of fbm320 is 15ms */
+	barom->delay_usec(1000 * 15);
+
 #ifdef SPI
 	fbm320_barom.bus_write = fbm320_spi_writeblock;
 	fbm320_barom.bus_read = fbm320_spi_readblock;
@@ -209,11 +213,7 @@ int8_t fbm320_init(void)
 	fbm320_barom.bus_write = fbm320_i2c_writeblock;
 	fbm320_barom.bus_read = fbm320_i2c_readblock;
 #endif
-	fbm320_barom.delay_usec = fbm320_us_delay;
-
-	/* The minimum start up time of fbm320 is 15ms */
-	barom->delay_usec(1000 * 15);
-
+	
 	err = fbm320_chipid_check(barom);
 	if (err) {
 		err = -1;
